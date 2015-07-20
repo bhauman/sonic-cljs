@@ -5,7 +5,7 @@
             :url "http://www.eclipse.org/legal/epl-v10.html"}
 
   :dependencies [[org.clojure/clojure "1.7.0"]
-                 [org.clojure/clojurescript "0.0-3297"]
+                 [org.clojure/clojurescript "0.0-3308"]
                  [devcards "0.2.0-SNAPSHOT"]
                  [sablono "0.3.4"]
                  [cljs-react-reload "0.1.0"]
@@ -22,9 +22,9 @@
 
   :cljsbuild {
               :builds [{:id "devcards"
-                        :source-paths ["src" "../devcards/src"]
+                        :source-paths ["src" "example_src"]
                         :figwheel { :devcards true } ;; <- note this
-                        :compiler { :main       "devmusic.core"
+                        :compiler { :main       "sonic-demos.core"
                                     :asset-path "js/compiled/devcards_out"
                                     :output-to  "resources/public/js/compiled/devmusic_devcards.js"
                                     :output-dir "resources/public/js/compiled/devcards_out"
@@ -32,17 +32,11 @@
                        {:id "dev"
                         :source-paths ["src"]
                         :figwheel true
-                        :compiler {:main       "devmusic.core"
+                        :compiler {:main       "sonic-cljs.core"
                                    :asset-path "js/compiled/out"
                                    :output-to  "resources/public/js/compiled/devmusic.js"
                                    :output-dir "resources/public/js/compiled/out"
-                                   :source-map-timestamp true }}
-                       {:id "prod"
-                        :source-paths ["src"]
-                        :compiler {:main       "devmusic.core"
-                                   :asset-path "js/compiled/out"
-                                   :output-to  "resources/public/js/compiled/devmusic.js"
-                                   :optimizations :advanced}}]}
+                                   :source-map-timestamp true }}]}
 
   :figwheel { :css-dirs ["resources/public/css"]
               :open-file-command "emacsclient"})
