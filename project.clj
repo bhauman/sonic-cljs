@@ -6,6 +6,7 @@
 
   :dependencies [[org.clojure/clojure "1.7.0"]
                  [org.clojure/clojurescript "0.0-3308"]
+                 [overtone "0.9.1"]
                  [devcards "0.2.0-SNAPSHOT"]
                  [sablono "0.3.4"]
                  [cljs-react-reload "0.1.0"]
@@ -23,7 +24,9 @@
   :cljsbuild {
               :builds [{:id "devcards"
                         :source-paths ["src" "example_src"]
-                        :figwheel { :devcards true } ;; <- note this
+                        :figwheel { :devcards true
+                                   ;; :heads-up-display false
+                                   } ;; <- note this
                         :compiler { :main       "sonic-demos.core"
                                     :asset-path "js/compiled/devcards_out"
                                     :output-to  "resources/public/js/compiled/devmusic_devcards.js"

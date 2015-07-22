@@ -3,8 +3,9 @@
    #_[om.core :as om :include-macrosclude-macros true]
    [sablono.core :as sab :include-macros true]
    [sonic-cljs.trig :refer [cosr sinr]]
+   [sonic-cljs.pitch :as p]   
    [cljs.test :as t :include-macros true :refer-macros [is testing]]
-   [cljs.core.async :as ca :refer [<! chan]])
+   [cljs.core.async :as ca :refer [<! chan timeout]])
   (:require-macros
    [devcards.core :as dc :refer [defcard defcard-doc deftest]]
    [cljs-react-reload.core :refer [defonce-react-class def-react-class]]
@@ -28,6 +29,14 @@
                                :filterEnvelope #js {:release 1.3 } }})]
     (.toMaster synth)
      synth))
+
+(defonce reload-atom
+  (do
+    (.addEventListener js/document.body "figwheel.js-reload"
+                       (fn [e] (swap! reload-atom inc)))
+    (atom 0)))
+
+;;document.body.addEventListener("figwheel.js-reload", function (e) {console.log(e.detail);} );
 
 (defonce default-synth (atom (fm-synth)))
 
@@ -224,13 +233,35 @@
 
 ;; beginning api
 
-(defn n
+;; this handling of rest is wrong
+(defn note [n]
+  (cond
+    (= ::rest n) ::rest
+    (and (or (string? n)
+               (symbol? n)
+               (keyword? n))
+         (= "rest" (name n)))
+    ::rest
+    :else (p/note n)))
+
+(defn handle-pitch [p]
+  (if (coll? p)
+    (map note p)
+    (note p)))
+
+(defn n*
   ([pitch duration]
-   {:pitch pitch :duration duration})
+   {:pitch pitch
+    :duration duration})
   ([pitch duration vel]
-   {:pitch pitch :duration duration :velocity vel})
+   {:pitch pitch
+    :duration duration :velocity vel})
   ([pitch duration vel sus]
-   {:pitch pitch :duration duration :velocity vel :sustain sus}))
+   {:pitch pitch
+    :duration duration :velocity vel :sustain sus}))
+
+(defn n [& args]
+  (apply n* (handle-pitch (first args)) (rest args)))
 
 (def ch n)
 
@@ -271,15 +302,16 @@
   [:+ (mloop* music)])
 
 (defn coerce-pitch [p]
-  (if (or (array? p) (coll? p))
-    (to-array (map name p))
-    (name p)))
+  (cond
+    (= p ::rest) ::rest
+    (or (array? p) (coll? p))
+    (to-array (map p/midi->hz
+                   p))
+    (integer? p) (p/midi->hz p)
+    :else p))
 
-(prn (array? 'rest))
-
-(defn note-play [this]
-  (let [state     (.. this -props -currentState)
-        {:keys [pitch duration start-time sustain velocity]} (.. this -props -data)
+(defn note-play [note state]
+  (let [{:keys [pitch duration start-time sustain velocity]} note
         pitch (coerce-pitch pitch)
         play-time (+ (:start-time state) start-time)]
     (comment
@@ -291,13 +323,18 @@
     (when-not (:synth state)
       (.error js/console "No SYNTH defined"))
     (when (and (>= play-time (current-time* state))
-               (not= pitch "rest")
+               (not= pitch ::rest)
                (:synth state))
-      (.triggerAttackRelease (:synth state)
-                             pitch
-                             (or sustain 0.3)
-                             (play-at* state play-time)
-                             (or velocity 1)))))
+      (if (instance? js/Tone.NoiseSynth (:synth state))
+        (.triggerAttackRelease (:synth state)
+                               pitch
+                               (play-at* state play-time)
+                               (or velocity 1))
+        (.triggerAttackRelease (:synth state)
+                               pitch
+                               (or sustain 0.3)
+                               (play-at* state play-time)
+                               (or velocity 1))))))
 
 (defonce-react-class Noter
   #js
@@ -308,7 +345,11 @@
       (or (not= (.-data next-props)     (.. this -props -data))
           (not= (.-playTime next-props) (.. this -props -playTime)))))
    ;; :componentDidUpdate (fn [] (this-as this (note-play this)))
-   :componentDidMount (fn [] (this-as this (note-play this)))
+   :componentDidMount (fn [] (this-as
+                             this
+                             (note-play
+                              (.. this -props -data)
+                              (.. this -props -currentState))))
    :render
    (fn []
      (this-as
@@ -353,6 +394,7 @@
           (reset! state cur))
         cur))))
 
+;; need to work on getting this reloaded
 (defonce-react-class PlaySequenceNew
   #js
   {:getInitialState
@@ -364,16 +406,21 @@
       (when (.. this -props)
         (let [data (.. this -props -data)]
           (.setState this #js {:skipper (create-skipper (:children data))})))))
-  :componentWillReceiveProps
-  (fn [next-props]
-    (this-as
-     this
-     (when-let [props  (.. this -props)]
-       (let [ch   (:children (.. props -data))
-             n-ch (:children (.. next-props -data))]
-         (when-not (= (hash (first ch))
-                      (hash (first n-ch)))
-           (.setState this #js {:skipper (create-skipper n-ch)}))))))   
+   :componentWillReceiveProps
+   (fn [next-props]
+     (this-as
+      this
+      
+      (when-let [props  (.. this -props)]
+        (let [rel   (.. props -reloadCount)
+              n-rel (.. next-props -reloadCount)
+              ch   (:children (.. props -data))
+              n-ch (:children (.. next-props -data))]
+          (when (or
+                 (not= (hash (first ch))
+                       (hash (first n-ch)))
+                 (not= rel n-rel))
+            (.setState this #js {:skipper (create-skipper n-ch)}))))))   
    :render
    (fn []
      (this-as
@@ -393,7 +440,8 @@
 
 (defmethod render-music :sequence [sequence state]
   (js/React.createElement PlaySequenceNew #js {:currentState state
-                                            :data sequence}))
+                                               :reloadCount @reload-atom
+                                               :data sequence}))
 
 (defmethod render-music :modify-state [{:keys [state-update children]} state]
   (current-val
@@ -443,6 +491,78 @@
                        state)))]))
               ))))})
 
+;; also without react
+(defmulti play-music
+  (fn [x]
+    (if-let [type (:type x)]
+      type
+      (if (:pitch x) :note))))
+
+(defmethod play-music :note [note state]
+  (note-play note state))
+
+(defmethod play-music :parallel [parallel state]
+  (mapv
+   #(play-music % state)
+   (:children parallel)))
+
+(defmethod play-music :sequence [sequence state]
+  (let [music-seq (create-skipper (:children sequence))]
+    (letfn [(run-loop [last reload-count]
+              (let [cur (first (music-seq
+                                (update-in state
+                                           [:start-time]
+                                           #(- % 0.1))))]
+                (when-not (or (nil? cur) (not= reload-count @reload-atom))
+                  (when (not= cur last)
+                    (play-music cur state))
+                  (js/requestAnimationFrame #(run-loop cur reload-count)))))]
+      (run-loop nil @reload-atom))))
+
+
+#_(defmethod play-music :sequence [sequence state]
+  (go
+    (loop [music-seq (create-skipper (:children sequence))
+           last nil
+           reload-count @reload-atom]
+      (let [cur (first (music-seq
+                        (update-in state
+                                   [:start-time]
+                                   #(- % 0.1))))]
+        (when-not (or (nil? cur) (not= reload-count @reload-atom))
+          (when (not= cur last)
+            (play-music cur state))
+          (<! (timeout 20))
+          (recur music-seq cur reload-count))))))
+
+;; doesn't handle function params yet
+(defmethod play-music :modify-state [{:keys [state-update children]} state]
+  (play-music
+       children
+       (merge
+        state
+        state-update)))
+
+(defn play-music! [state music]
+  (let [modded (int
+                (/ (-
+                    (current-time* state)
+                    (:start-time state)) 4))
+        new-start
+        (+ (:start-time state)
+           (* modded 4))]
+    (play-music (process-music 0 music)
+                (assoc 
+                 state
+                 :start-time
+                 new-start))))
+
+(defcard play-music-cardd
+  (fn [da o]
+    #_(play-music! @da (mloop (map #(n % 0.25) [55 55 57 59]))))
+  (initial-player-state
+   { :start-time (+ (current-time* {:speed 0.41}) 0.1)
+     :synth @default-synth}))
 
 (defn music-root [state-atom music]
   (js/React.createElement
@@ -472,21 +592,6 @@
 
 #_(defcard top apres-base-line-top)
 
-(defn fm-synth []
-  (prn "Creating fm synth")
-  (let [synth
-        (js/Tone.PolySynth.
-         4
-         js/Tone.FMSynth
-         #js {:harmonicity 3
-              :modulationIndex 7
-              :carrier #js { :envelope #js {:release 1.3 }
-                             :filterEnvelope #js {:release 1.3 } }
-              :modulator #js { :envelope #js {:release 1.3 }
-                               :filterEnvelope #js {:release 1.3 } }})]
-    (.toMaster synth)
-     synth))
-
 (defn main-synth []
   (prn "Creating main-synth synth")
   (let [synth (js/Tone.PolySynth.
@@ -515,6 +620,8 @@
         #_(.setPreset "Pianoetta")]
     (.toMaster synth)                                   
     synth))
+
+
 
 (defn main []
   ;; conditionally start the app based on wether the #main-app-area
