@@ -1,29 +1,13 @@
 (ns sonic-demos.sorensen
   (:require
    [devcards.core :as dc]
-   [sonic-cljs.core :as sc :refer [n n* ch initial-player-state mloop music-root-card use-synth mloop* main-synth play-music!]]
+   [sonic-cljs.core :as sc :refer [n n* ch initial-player-state mloop music-root-card use-synth mloop* play-music!]]
    [sonic-cljs.trig :refer [cosr quantize]]
-   [sonic-cljs.pitch :as p]   
-   [sablono.core :as sab :include-macros true])
+   [sonic-cljs.pitch :as p]
+   [sonic-cljs.webaudio :as wa]
+   [sablono.core :as sab :include-macros true]) 
   (:require-macros
    [devcards.core :refer [defcard deftest]]))
-
-(defn fm-sor-synth []
-  (prn "Creating sor synth")
-  (let [synth
-        (js/Tone.PolySynth.
-         3
-         js/Tone.FMSynth
-         #js {:harmonicity 2
-              :modulationIndex 30
-              :carrier #js   { :envelope #js {:release 1.3 }
-                               :filterEnvelope #js {:release 1.3 } }
-              :modulator #js { :envelope #js {:release 1.3 }
-                               :filterEnvelope #js {:release 1.3 } }})]
-    (.toMaster synth)
-     synth))
-
-(defonce high-synth (fm-sor-synth))
 
 (defn quantizer
   [midi field]
@@ -54,17 +38,17 @@
   (quantizer
    (int
     (cosr beat (cosr beat 3 5 2)
-          (+ (sc/note root) 24)
+          (+ (sc/note root) 12)
           (/ 3 7))) scale))
 
 (defn right-hand-high [scale root beat]
   (if (< (rand) 0.6)
     (quantizer
-     (+ 7
-        (int
-         (cosr beat (cosr beat 3 5 2)
-               (+ (sc/note root) 24)
-               (/ 3 7))))
+     (+ 7 (int
+           (cosr beat
+                 (cosr beat 3 5 2)
+                 (+ (sc/note root) 24)
+                 (/ 3 7))))
      scale)
     ::sc/rest))
 
@@ -74,87 +58,77 @@
   (n
    (right-hand-n scale root beat)
    (/ 0.25 4)
-   (cosr beat 0.35 0.6 (/ 3 7))
+   (cosr beat 0.5 0.5 (/ 3 7))
    0.01))
 
 (defn music-note-high [scale root beat]
   (n
    (right-hand-high scale root beat)
    (/ 0.25 4)
-   (cosr beat 0.25 0.4 (/ 3 7))
+   (cosr beat 0.3 0.6 (/ 3 7))
    0.02))
 
 (def root-note
   (iterate
     (fn [x]
-      (rand-nth
-       (seq (disj #{52 50 48} x))))
+      (- (rand-nth
+          (seq (disj #{52 50 48} x)))
+         0))
     48))
 
 (defn base-note [bnote root beat]
-  [(n bnote 0.125 0.9)
-   (n root 0.125 0.7)])
+  [(n bnote 0.125 0.8 0.7)
+   (n root 0.125 0.5 0.7)])
 
-(defn main-synther []
-  (prn "Creating main-synth synth")
-  (let [synth
-        (js/Tone.PolySynth.
-         2
-         js/Tone.FMSynth
-         #js { :volume 0.5
-              :carrier #js { :envelope #js {:release 0.8 }
-                            :filterEnvelope #js {:release 0.8 } }
-              :modulator #js { :envelope #js {:release 0.8 }
-                              :filterEnvelope #js {:release 0.8 } }
-              })]
-    (.toMaster synth)                                   
-    synth))
+(def main-synth*  (wa/piano wa/steinway-grand))
+(def main-synth2* (wa/piano wa/steinway-grand))
+(def main-synth3* (wa/piano wa/steinway-grand))
 
-(defonce main-synth* (main-synther))
+#_(swap! music-state assoc :start-time (sc/current-time* {:speed 0.31}))
 
-#_(swap! music-state assoc :start-time (sc/current-time* {:speed 0.61}))
-
-(defcard bass-line
+(defcard bass-linee
   (fn [da o]
-    (play-music!
-       @da
-       (use-synth
-        main-synth*
-        [:+
-         (mapcat
-                #(base-note %1 %2 %3)
-                (mloop* [55 55 57 59 #_43])
-                (mapcat #(take 8 (repeat %)) root-note)
-                (beat 0.125))])))
+    #_(play-music!
+     @da
+     (use-synth
+      main-synth*
+      [:+
+       (mapcat
+        #(base-note %1 %2 %3)
+        (mloop* (map #(- % 0) [55 55 57 59 #_43]))
+        (mapcat #(take 8 (repeat %)) root-note)
+        (beat 0.25))])))
   music-state)
 
-(defcard impro-threee
+(defcard impro-threeee
   (fn [da o]
-    (play-music!
+    #_(play-music!
      @da
-     [:+
+     (use-synth
+      main-synth2*
+      [:+
       (map
        #(music-note scale %1 %2)
        (mapcat #(take 64 (repeat %)) root-note)
-       (beat 0.25))]))
+       (beat 0.25))])))
   music-state)
 
 (defcard impro-high
   (fn [da o]
-    (play-music!
+    #_(play-music!
      @da
      (use-synth
-      high-synth
+      main-synth3*
       [:+
        (map
         #(music-note-high scale %1 %2)
         (mapcat
          #(take 64 (repeat %))
          root-note)
-        (beat 0.25))])))
+        (beat 0.125))])))
   music-state)
 
-(defonce bass-synth
+#_(defonce bass-synth
   (let [synth
         (js/Tone.FMSynth.
          #js {:harmonicity 2
@@ -165,7 +139,7 @@
                               :filterEnvelope #js {:release 1.3 } }})]
     (.toMaster synth)))
 
-(defcard low-base-line
+#_(defcard low-base-line
   (fn [da o]
     (play-music!
      @da
@@ -187,17 +161,17 @@
 
 (prn (p/find-note-name 42))
 
-(defonce hh-synth
+#_(defonce hh-synth
   (let [s
         (js/Tone.Sampler.
          #js {:hh "audio/505/hh.mp3" })]
     (.toMaster s)))
 
-(defonce kick-synth
+#_(defonce kick-synth
   (let [synth (js/Tone.NoiseSynth.)]
     (.toMaster synth)))
 
-(defcard kick
+#_(defcard kick
   (fn [da o]
     (play-music!
      @da
@@ -211,7 +185,7 @@
         (beat 0.125))])))
   music-state)
 
-(defcard hh
+#_(defcard hh
   (fn [da o]
     (play-music!
      @da

@@ -1,7 +1,8 @@
 (ns sonic-demos.apres-midi
   (:require
    [devcards.core :as dc]
-   [sonic-cljs.core :as sc :refer [n ch initial-player-state mloop music-root-card use-synth main-synth]]
+   [sonic-cljs.core :as sc :refer [n ch initial-player-state mloop music-root-card use-synth]]
+   [sonic-cljs.webaudio :as wa]
    [sablono.core :as sab :include-macros true])
   (:require-macros
    [devcards.core :refer [defcard deftest]]))
@@ -42,6 +43,24 @@
        (n "F#4" 0.0625 1 1)
        (n "E4" 0.0625 1 1)
        (n "F#4" 0.75 1 0.5)])))))
+
+
+
+(defn map-pitch* [f pitch]
+  (cond
+    (= pitch ::sc/rest) pitch
+    (coll? pitch) (map f pitch)
+    :else (f pitch)))
+
+(defn map-pitch [f note]
+  (update-in note [:pitch] (fn [p] (map-pitch* f p))))
+
+(defn pitch-adjust [adj]
+  (fn [n]
+    (map-pitch #(+ adj %) n)))
+
+
+#_(prn (take 5 (map (pitch-adjust -12) apres-intro)))
 
 (def apres-intro2
   (apply
@@ -161,63 +180,66 @@
   (map
    (fn [x]
      (-> x
-       (update-in [:velocity] #(/ % 2))
+       (update-in [:velocity] #(/ % 1.5))
        ))
    [(ch ["E4" "E3"]
-        0.135 1)
-   (n "B3" 0.115 0.2)
-   (ch ["E4" "G3"] 0.135 0.5)
-   (n "B3" 0.115 0.2)
-
-   (ch ["E4" "E3"] 0.135 1)
-   (n "B3" 0.115 0.2)
-   (ch ["E4" "G3"] 0.135 0.5)
-   (n "B3" 0.115 0.2)
+        0.125 0.9)
+    (n "B3" 0.125 0.7)
+    (ch ["E4" "G3"] 0.125 0.5)
+    (n "B3" 0.125 0.7)
+    
+    (ch ["E4" "E3"] 0.125 0.9)
+    (n "B3" 0.125 0.7)
+    (ch ["E4" "G3"] 0.125 0.5)
+    (n "B3" 0.125 0.7)
+    
+    (ch ["D4" "D2"] 0.125 0.9)
+    (n "B3" 0.125 0.7)
+    (ch ["D4" "G3"] 0.125 0.5)
+    (n "B3" 0.125 0.7)
+    
+    (ch ["D4" "D2"] 0.125 0.9)
+    (n "B3" 0.125 0.7)
+    (ch ["D4" "G3"] 0.125 0.5)
+    (n "B3" 0.125 0.7)
+    
+    
+   (ch ["D4" "D3"] 0.125 0.9)
+   (n "B3" 0.125 0.7)
+   (ch ["D4" "F#3"] 0.125 0.5)
+   (n "B3" 0.125 0.7)
    
-   (ch ["D4" "D3"] 0.125 1)
-   (n "B3" 0.125 0.2)
-   (ch ["D4" "G3"] 0.125 0.8)
-   (n "B3" 0.125 0.2)
-   
-   (ch ["D4" "D3"] 0.125 1)
-   (n "B3" 0.125 0.2)
-   (ch ["D4" "G3"] 0.125 0.8)
-   (n "B3" 0.125 0.2)
+   (ch ["D4" "D3"] 0.125 0.9)
+   (n "B3" 0.125 0.7)
+   (ch ["D4" "F#3"] 0.125 0.5)
+   (n "B3" 0.125 0.7)
    
    
-   (ch ["D4" "D3"] 0.125 1)
-   (n "B3" 0.125 0.2)
-   (ch ["D4" "F#3"] 0.125 0.8)
-   (n "B3" 0.125 0.2)
+   (ch ["D4" "D3"] 0.125 0.9)
+   (n "A3" 0.125 0.7)
+   (ch ["D4" "F#3"] 0.125 0.5)
+   (n "A3" 0.125 0.7)
    
-   (ch ["D4" "D3"] 0.125 1)
-   (n "B3" 0.125 0.2)
-   (ch ["D4" "F#3"] 0.125 0.8)
-   (n "B3" 0.125 0.2)
-   
-   
-   (ch ["D4" "D3"] 0.125 1)
-   (n "A3" 0.125 0.2)
-   (ch ["D4" "F#3"] 0.125 0.8)
-   (n "A3" 0.125 0.2)
-   
-   (ch ["D4" "D3"] 0.125 01)
-   (n "A3" 0.125 0.2)
-   (ch ["D4" "F#3"] 0.125 0.8)
-   (n "A3" 0.125 0.2)]
+   (ch ["D4" "D3"] 0.125 0.9)
+   (n "A3" 0.125 0.7)
+   (ch ["D4" "F#3"] 0.125 0.5)
+   (n "A3" 0.125 0.7)]
    ))
 
 (defonce music-state (atom (initial-player-state {:speed 0.41})))
 
 (defcard music-state music-state)
 
-(defcard apres-intro
+(defcard apres-introo
   (music-root-card
-   (mloop (concat
-           #_[(n 'rest 4)]
-           apres-intro
-           apres-stacatto
-           apres-arpeggio)))
+   (use-synth (wa/piano wa/ivy-audio-piano) #_(wa/piano wa/steinway-grand)
+              (mloop (concat
+                      #_[(n 'rest 4)]
+                      (map (pitch-adjust -12) apres-intro)
+                      (map (pitch-adjust -12) apres-stacatto)
+                      (map (pitch-adjust -12) apres-arpeggio)))
+             
+              #_(mloop apres-base-line)))
   music-state)
 
 (defcard apres-stacatto
@@ -230,11 +252,12 @@
    (mloop apres-arpeggio))
   music-state)
 
-(defcard apres-base-line
+(defcard apres-base-linee
   (music-root-card
-   (use-synth main-synth
-              (mloop apres-base-line)))
+   (use-synth (wa/piano wa/ivy-audio-piano)
+              (mloop (map (pitch-adjust -24) apres-base-line))))
   music-state)
+
 
 
 

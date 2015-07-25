@@ -14,6 +14,7 @@ checkouts/
 .rbenv-version
 config.ru
 resources/public/js/compiled
+resources/public/audio
 .\#*
 \#*
 

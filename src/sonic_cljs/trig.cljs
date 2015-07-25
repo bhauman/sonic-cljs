@@ -6,6 +6,7 @@
    [cljs.test :refer [is]]
    [devcards.core :refer [deftest]]))
 
+
 (defn quantize
   [midi field]
   (let [nt midi]

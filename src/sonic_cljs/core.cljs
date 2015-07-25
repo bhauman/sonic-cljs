@@ -3,7 +3,8 @@
    #_[om.core :as om :include-macrosclude-macros true]
    [sablono.core :as sab :include-macros true]
    [sonic-cljs.trig :refer [cosr sinr]]
-   [sonic-cljs.pitch :as p]   
+   [sonic-cljs.pitch :as p]
+   [sonic-cljs.webaudio :as wa]
    [cljs.test :as t :include-macros true :refer-macros [is testing]]
    [cljs.core.async :as ca :refer [<! chan timeout]])
   (:require-macros
@@ -15,21 +16,6 @@
 
 (def default-play-speed 0.41)
 
-(defn fm-synth []
-  (prn "Creating fm synth")
-  (let [synth
-        (js/Tone.PolySynth.
-         4
-         js/Tone.FMSynth
-         #js {:harmonicity 3
-              :modulationIndex 7
-              :carrier #js { :envelope #js {:release 1.3 }
-                             :filterEnvelope #js {:release 1.3 } }
-              :modulator #js { :envelope #js {:release 1.3 }
-                               :filterEnvelope #js {:release 1.3 } }})]
-    (.toMaster synth)
-     synth))
-
 (defonce reload-atom
   (do
     (.addEventListener js/document.body "figwheel.js-reload"
@@ -38,7 +24,7 @@
 
 ;;document.body.addEventListener("figwheel.js-reload", function (e) {console.log(e.detail);} );
 
-(defonce default-synth (atom (fm-synth)))
+(defonce default-synth (atom (wa/fm-synth {})))
 
 (defonce default-synth-watch
   (do
@@ -205,20 +191,12 @@
             :unmountFn    unmount-fn }
       children)))
 
-
-(defn basic-main-synth []
-  (prn "Creating synth")
-  (let [synth 
-        (.setPreset (js/Tone.PolySynth. 4 js/Tone.FMSynth) "Pianoetta")]
-    (.toMaster synth)                                   
-    synth))
-
 (defn current-time* [state]
   (* (or (:speed state) 0.5)
-     js/Tone.context.currentTime))
+     wa/*context*.currentTime))
 
 (defn play-at* [state time]
-  (/  time (:speed state)))
+  (+ (/ time (:speed state)) 0.5))
 
 (declare fm-synth)
 
@@ -310,31 +288,36 @@
     (integer? p) (p/midi->hz p)
     :else p))
 
+
 (defn note-play [note state]
-  (let [{:keys [pitch duration start-time sustain velocity]} note
-        pitch (coerce-pitch pitch)
-        play-time (+ (:start-time state) start-time)]
-    (comment
-      (prn    (:speed state))
-      (prn    (:start-time state))    
-      (prn                           (current-time* state))
-      (prn                            pitch duration play-time)
-      (prn (play-at* state play-time)))
-    (when-not (:synth state)
-      (.error js/console "No SYNTH defined"))
-    (when (and (>= play-time (current-time* state))
-               (not= pitch ::rest)
-               (:synth state))
-      (if (instance? js/Tone.NoiseSynth (:synth state))
-        (.triggerAttackRelease (:synth state)
-                               pitch
-                               (play-at* state play-time)
-                               (or velocity 1))
-        (.triggerAttackRelease (:synth state)
-                               pitch
-                               (or sustain 0.3)
-                               (play-at* state play-time)
-                               (or velocity 1))))))
+  (when (not= (:pitch note) ::rest)
+    (let [{:keys [pitch duration start-time sustain velocity]} note
+          pitch pitch #_(coerce-pitch pitch)
+          play-time (+ (:start-time state) start-time)]
+      (comment
+        (prn    (:speed state))
+        (prn    (:start-time state))    
+        (prn                           (current-time* state))
+        (prn                            pitch duration play-time)
+        (prn (play-at* state play-time)))
+      (when-not (:synth state)
+        (.error js/console "No SYNTH defined"))
+      (when (and (>= play-time (current-time* state))
+                 (not= pitch ::rest)
+                 (:synth state)
+                 (satisfies? wa/IPlayable (:synth state)))
+        #_(prn pitch)
+
+        (if (coll? pitch)
+          (doseq [p pitch]
+            #_(prn "HERERE")
+            (wa/-play-note (:synth state) (assoc note
+                                                 :pitch p
+                                                 :abs-start-time (play-at* state play-time))))
+
+          
+          (wa/-play-note (:synth state) (assoc note :abs-start-time (play-at* state play-time))))))))
+
 
 (defonce-react-class Noter
   #js
@@ -571,57 +554,6 @@
 (defn music-root-card [music]
   (fn [data-atom owner]
     (music-root data-atom music)))
-
-
-
-#_(def apres-base-line-top
-  (map (fn [x] (update-in
-               x [:pitch] 
-               (fn [p] (if (string? p)
-                        "rest"
-                        (aget p 0)))))
-       apres-base-line))
-
-#_(def apres-base-line-bottom
-  (map (fn [x] (update-in
-               x [:pitch] 
-               (fn [p] (if (string? p)
-                        p
-                        (aget p 1)))))
-       apres-base-line))
-
-#_(defcard top apres-base-line-top)
-
-(defn main-synth []
-  (prn "Creating main-synth synth")
-  (let [synth (js/Tone.PolySynth.
-               4
-               js/Tone.FMSynth
-               #js { :volume 0.5
-                    :carrier #js { :envelope #js {:release 0.8 }
-                                  :filterEnvelope #js {:release 0.8 } }
-                    :modulator #js { :envelope #js {:release 0.8 }
-                                    :filterEnvelope #js {:release 0.8 } }
-                    }) 
-        #_(.setPreset "Pianoetta")]
-    (.toMaster synth)                                   
-    synth))
-
-(defn single-fm-synth []
-  (prn "Creating synth")
-  (let [synth (js/Tone.FMSynth.
-               #js {
-                    :carrier #js { :envelope #js {:release 0.8 }
-                                  :filterEnvelope #js {:release 0.8 } }
-                    :modulator #js { :envelope #js {:release 0.8 }
-                                    :filterEnvelope #js {:release 0.8 } }
-                    }
-               ) 
-        #_(.setPreset "Pianoetta")]
-    (.toMaster synth)                                   
-    synth))
-
-
 
 (defn main []
   ;; conditionally start the app based on wether the #main-app-area
