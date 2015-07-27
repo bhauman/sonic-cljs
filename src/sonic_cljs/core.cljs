@@ -288,7 +288,6 @@
     (integer? p) (p/midi->hz p)
     :else p))
 
-
 (defn note-play [note state]
   (when (not= (:pitch note) ::rest)
     (let [{:keys [pitch duration start-time sustain velocity]} note
@@ -306,11 +305,9 @@
                  (not= pitch ::rest)
                  (:synth state)
                  (satisfies? wa/IPlayable (:synth state)))
-        #_(prn pitch)
 
         (if (coll? pitch)
           (doseq [p pitch]
-            #_(prn "HERERE")
             (wa/-play-note (:synth state) (assoc note
                                                  :pitch p
                                                  :abs-start-time (play-at* state play-time))))
@@ -489,6 +486,7 @@
    #(play-music % state)
    (:children parallel)))
 
+
 (defmethod play-music :sequence [sequence state]
   (let [music-seq (create-skipper (:children sequence))]
     (letfn [(run-loop [last reload-count]
@@ -496,11 +494,15 @@
                                 (update-in state
                                            [:start-time]
                                            #(- % 0.1))))]
-                (when-not (or (nil? cur) (not= reload-count @reload-atom))
+                (when (and cur
+                           (= reload-count @reload-atom))
                   (when (not= cur last)
                     (play-music cur state))
+
                   (js/requestAnimationFrame #(run-loop cur reload-count)))))]
       (run-loop nil @reload-atom))))
+
+
 
 
 #_(defmethod play-music :sequence [sequence state]
@@ -539,6 +541,10 @@
                  state
                  :start-time
                  new-start))))
+
+(defn play-music!! [state music]
+  (js/setTimeout #(play-music! state music) 500))
+
 
 (defcard play-music-cardd
   (fn [da o]

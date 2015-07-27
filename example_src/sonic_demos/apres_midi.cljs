@@ -7,6 +7,7 @@
   (:require-macros
    [devcards.core :refer [defcard deftest]]))
 
+
 (def apres-intro
   (apply
    concat
@@ -14,7 +15,7 @@
     2
     (repeat
      (map
-      (fn [x] (assoc x :sustain 0.1))
+      (fn [x] (assoc x :sustain 0.3))
       [(n "rest" 0.125)
        (n "G4" 0.0625 1 1)
        (n "F#4" 0.0625 0.5 1)
@@ -45,7 +46,6 @@
        (n "F#4" 0.75 1 0.5)])))))
 
 
-
 (defn map-pitch* [f pitch]
   (cond
     (= pitch ::sc/rest) pitch
@@ -62,6 +62,8 @@
 
 #_(prn (take 5 (map (pitch-adjust -12) apres-intro)))
 
+(prn       (n "G5" 0.0625 1 1.5))
+
 (def apres-intro2
   (apply
    concat
@@ -69,32 +71,32 @@
     2
     (repeat
      [(n "rest" 0.125)
-      (n "G5" 0.0625 1 0.2)
-      (n "F#5" 0.0625 1 0.2)
-      (n "G5" 0.125 1 0.2)
-      (n "B5" 0.0625 1 0.2)
-      (n "C6" 0.0625 1 0.2)
-      (n "B5" 0.5 1 0.2)
+      (n "G5" 0.0625 1 1.5)
+      (n "F#5" 0.0625 1 1.5)
+      (n "G5" 0.125 1 1.5)
+      (n "B5" 0.0625 1 1.5)
+      (n "C6" 0.0625 1 1.5)
+      (n "B5" 0.5 1 0.8)
       
       (n "rest" 0.125)
-      (n "F#5" 0.0625 1 0.2)
-      (n "G5" 0.0625 1 0.2)
-      (n "F#5" 0.125 1 0.2)
-      (n "G5" 0.0625 1 0.2)
-      (n "A5" 0.0625 1 0.2)
-      (n "G5" 0.5 1 0.2)
+      (n "F#5" 0.0625 1 1.5)
+      (n "G5" 0.0625 1 1.5)
+      (n "F#5" 0.125 1 1.5)
+      (n "G5" 0.0625 1 1.5)
+      (n "A5" 0.0625 1 1.5)
+      (n "G5" 0.5 1 0.8)
       
       (n "rest" 0.125)
-      (n "F#5" 0.0625 1 0.2)
-      (n "E5" 0.0625 1 0.2)
-      (n "F#5" 0.125 1 0.2)
-      (n "B5" 0.0625 1 0.2)
-      (n "C6" 0.0625 1 0.2)
-      (n "B5" 0.5 1 0.2)
+      (n "F#5" 0.0625 1 1.5)
+      (n "E5" 0.0625 1 1.5)
+      (n "F#5" 0.125 1 1.5)
+      (n "B5" 0.0625 1 1.5)
+      (n "C6" 0.0625 1 1.5)
+      (n "B5" 0.5 1 0.8)
       
       (n "rest" 0.125)
-      (n "F#5" 0.0625 1 0.2)
-      (n "E5" 0.0625 1 0.2)
+      (n "F#5" 0.0625 1 1.5)
+      (n "E5" 0.0625 1 1.5)
       (n "F#5" 0.75 1 0.5)]))      ))
 
 (def apres-stacatto
@@ -235,9 +237,12 @@
    (use-synth (wa/piano wa/ivy-audio-piano) #_(wa/piano wa/steinway-grand)
               (mloop (concat
                       #_[(n 'rest 4)]
-                      (map (pitch-adjust -12) apres-intro)
-                      (map (pitch-adjust -12) apres-stacatto)
-                      (map (pitch-adjust -12) apres-arpeggio)))
+                      apres-intro
+                      apres-stacatto
+                      apres-arpeggio
+                      (map (pitch-adjust +12) apres-intro)
+                      (map (pitch-adjust +12) apres-stacatto)
+                      apres-arpeggio))
              
               #_(mloop apres-base-line)))
   music-state)
@@ -255,8 +260,9 @@
 (defcard apres-base-linee
   (music-root-card
    (use-synth (wa/piano wa/ivy-audio-piano)
-              (mloop (map (pitch-adjust -24) apres-base-line))))
+              (mloop apres-base-line)))
   music-state)
+
 
 
 
