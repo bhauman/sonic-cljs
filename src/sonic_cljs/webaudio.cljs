@@ -20,6 +20,9 @@
 (defprotocol IDisposable
   (-dispose [this]))
 
+(defprotocol IOptionsSchema
+  (-options-schema   [this]))
+
 (defonce ^:dynamic *context* (js/AudioContext.))
 
 (defonce ^:dynamic *output*  (let [ gain (.createGain *context*)
@@ -38,16 +41,33 @@
   #_(prn env)
   (+ attack decay sustain release))
 
-(defn ADSR-param [{:keys [attack decay sustain release amp spike min]} param start-time]
-  (let [min (or min 0)]
+(def envelope-params [:attack-level :sustain-level :attack :decay :sustain :release :amp :velocity :min])
+
+;; inspired by the sonic pi parameters and defaults
+(defn ADSR-param [{:keys [attack-level sustain-level attack decay sustain release amp velocity min]
+                   :or   {attack-level 1
+                          sustain-level 1
+                          attack 0
+                          decay 0
+                          sustain 0
+                          release 1
+                          amp 1
+                          velocity 1
+                          min 0}}
+                  param
+                  start-time]
+  (let [velocity      (max (cljs.core/min velocity 1) 0)
+        bottom-gain   min
+        sustain-gain  (+ bottom-gain (* amp sustain-level velocity))
+        attack-gain   (+ bottom-gain (* amp attack-level velocity))]
     (doto param
-      (.setValueAtTime          min start-time)    
-      (.linearRampToValueAtTime     (+ amp spike) 
-                                    (+ start-time attack))
-      (.linearRampToValueAtTime amp (+ start-time attack decay))
-      (.cancelScheduledValues       (+ start-time attack decay sustain))
-      (.setValueAtTime          amp (+ start-time attack decay sustain))
-      (.linearRampToValueAtTime min (+ start-time attack decay sustain release)))))
+      (.cancelScheduledValues                start-time)
+      (.setValueAtTime          bottom-gain  start-time)    
+      (.linearRampToValueAtTime attack-gain  (+ start-time attack))
+      (.linearRampToValueAtTime sustain-gain (+ start-time attack decay))
+      (.cancelScheduledValues                (+ start-time attack decay sustain))
+      (.setValueAtTime          sustain-gain (+ start-time attack decay sustain))
+      (.linearRampToValueAtTime bottom-gain  (+ start-time attack decay sustain release)))))
 
 ;; sample loading
 
@@ -142,15 +162,19 @@
     (def steinway-grand (<! (load-steinway-grand)))
     (prn "Steinway grand loaded")))
 
-(defonce loading-ivy-audio-piano
+#_(defonce loading-ivy-audio-piano
   (go
     (def ivy-audio-piano (<! (load-ivy-audio-piano)))
     (prn "Ivy audio grand loaded")))
 
-#_(prn steinway-grand)
+(defn merge-envelope [default-envelope envelope-like]
+  (merge default-envelope (select-keys envelope-like envelope-params)))
 
+(defn start-time [note-event]
+  (or (:abs-start-time note-event) (+ 0.1 (.-currentTime *context*))))
 
-#_(prn (map scale-gain-to-frequency [1 0.9 0.8 0.7 0.6 0.5 0.4 0.3 0.2 0.1 0.02]))
+(defn valid-envelope? [envelope]
+  (> (:velocity envelope) 0.001))
 
 ;; this is linear could be much better
 (defn filter-frequency [{:keys [velocity pitch] :as n}]
@@ -161,7 +185,6 @@
     (* 2500))) ;; middle frequency
 
 (defn piano [decoded-buffers]
-  (prn "Creating Piano")
   (let [output     (.createGain *context*)
         delay      (.createDelay *context*)
         delay-gain (.createGain *context*)
@@ -178,7 +201,7 @@
                           :sustain 1.3
                           :release 0.2
                           :amp 0.9
-                          :spike 0.1}]
+                          :sustain-level 0.9}]
     
     (set! (.. delay -delayTime -value) 0.0001)
     (set! (.. output -gain -value) 0.95)
@@ -190,88 +213,64 @@
     (reify
       IPlayable
       (-play-note [_ note-event]
-        (let [abs-start-time (or (:abs-start-time note-event)
-                                 (+ 0.1 (.-currentTime *context*)))
-              end-time (+ abs-start-time 4)
-              envelope (merge default-envelope
-                              (select-keys note-event [:sustain
-                                                       :decay
-                                                       :attack
-                                                       :release
-                                                       :amp
-                                                       :spike]))
-              velocity (min (max (:velocity note-event) 0) 1)
-              envelope (assoc envelope :amp (* velocity (:amp envelope)))]
-          (when (> velocity 0.001)
-            (if-let [avail-filt (create-filter)]
-              (if-let [buffer (get decoded-buffers (:pitch note-event))]
-                (do
-                  (let [source (buffer-source (:decoded-buffer buffer))]
-                    (ADSR-param envelope (.. (:gain avail-filt) -gain) abs-start-time)
-                    (.setValueAtTime (.. (:filt avail-filt) -frequency) (filter-frequency note-event) abs-start-time)
-                    (.connect source (:filt avail-filt))
-                    (.start source abs-start-time)
-                    (.stop source (+ abs-start-time (adsr-duration envelope) 0.3)))))
-              (.error js/console "Not playing note as no filter is available."))
-            )))
+        (let [abs-start-time (start-time note-event)
+              envelope       (merge-envelope default-envelope note-event)]
+          (when (valid-envelope? envelope)
+            (when-let [buffer  (get decoded-buffers (:pitch note-event))]
+              (let [source     (buffer-source (:decoded-buffer buffer))
+                    avail-filt (create-filter)]
+                (ADSR-param envelope (.. (:gain avail-filt) -gain) abs-start-time)
+                (.setValueAtTime (.. (:filt avail-filt) -frequency) (filter-frequency note-event) abs-start-time)
+                (.connect source (:filt avail-filt))
+                (.start source abs-start-time)
+                (.stop source (+ abs-start-time (adsr-duration envelope) 0.1)))))))
       IDuration
-      (-duration [_ note-event] 4))))
+      (-duration [_ note-event]
+        (adsr-duration (merge-envelope default-envelope note-event))))))
+
 
 (comment
   (def piano-sampler (piano ivy-audio-piano))
 
-
-(-play-note piano-sampler {:pitch 55 :velocity 1   :abs-start-time (+ 1 (.-currentTime *context*)) })
-(-play-note piano-sampler {:pitch 55 :velocity 0.7 :abs-start-time (+ 3 (.-currentTime *context*)) })
-(-play-note piano-sampler {:pitch 55 :velocity 0.5 :abs-start-time (+ 5 (.-currentTime *context*)) })
-(-play-note piano-sampler {:pitch 55 :velocity 0.3 :abs-start-time (+ 7 (.-currentTime *context*)) })
-(-play-note piano-sampler {:pitch 55 :velocity 0.1 :abs-start-time (+ 9 (.-currentTime *context*)) }))
+  (-play-note piano-sampler {:pitch 55 :velocity 1   :abs-start-time (+ 1 (.-currentTime *context*)) })
+  (-play-note piano-sampler {:pitch 55 :velocity 0.7 :abs-start-time (+ 3 (.-currentTime *context*)) })
+  (-play-note piano-sampler {:pitch 55 :velocity 0.5 :abs-start-time (+ 5 (.-currentTime *context*)) })
+  (-play-note piano-sampler {:pitch 55 :velocity 0.3 :abs-start-time (+ 7 (.-currentTime *context*)) })
+  (-play-note piano-sampler {:pitch 55 :velocity 0.1 :abs-start-time (+ 9 (.-currentTime *context*)) }))
 
 (defn buffer-map-player [buffer-map-atom options]
   (let [output (.createGain *context*)
         create-gain (fn []
                       (let [gain (.createGain *context*)]
-                        (set! (.. gain -gain -value) 0.9)
                         (.connect gain output)
                         gain))
-        default-envelope (merge {:attack 0.01
+        default-envelope (merge {:sustain-level 0.9
+                                 :attack 0.01
                                  :decay 0.1
                                  :sustain 1.3
                                  :release 0.2
                                  :velocity 1
-                                 :amp 0.9
-                                 :spike 0.1} options)]
-    (set! (.. output -gain -value) 1)
+                                 :amp 0.9}
+                                options)]
     (.connect output *output*)
     (reify
       IPlayable
       (-play-note [_ note-event]
-        (let [abs-start-time (or (:abs-start-time note-event)
-                                 (+ 0.1 (.-currentTime *context*)))
-              envelope (merge default-envelope
-                              (select-keys note-event [:sustain
-                                                       :velocity
-                                                       :decay
-                                                       :attack
-                                                       :release
-                                                       :amp
-                                                       :spike]))
-              velocity (min (max (or (:velocity envelope) 1) 0) 1)
-              envelope (assoc envelope :amp (* velocity (:amp envelope)))]
-          (when (> velocity 0.0000001)
-            (when-let [gain (create-gain)]
-              (when-let [buffer
-                         (if (= 1 (count @buffer-map-atom))
-                           (second (first @buffer-map-atom))
-                           (get @buffer-map-atom (:pitch note-event)))]
-                (when-let [source (buffer-source buffer)]
+        (let [abs-start-time (or (:abs-start-time note-event) (+ 0.1 (.-currentTime *context*)))
+              envelope (merge-envelope default-envelope note-event)]
+          (when (valid-envelope? envelope)
+            (when-let [buffer
+                       (if (= 1 (count @buffer-map-atom))
+                         (second (first @buffer-map-atom))
+                         (get @buffer-map-atom (:pitch note-event)))]
+              (when-let [source (buffer-source buffer)]
+                (let [gain (create-gain)]
                   (when (:loop default-envelope)
                     (set! (.-loop source) true))
-                  (.connect source gain)
-
+                  (.connect source gain) 
                   (ADSR-param envelope (.. gain -gain) abs-start-time)
                   (.start source abs-start-time)
-                  (.stop source (+ abs-start-time (adsr-duration envelope) 0.3))))))))
+                  (.stop source (+ abs-start-time (adsr-duration envelope) 0.1))))))))
       IDuration
       (-duration [_ note-event]
         (adsr-duration
@@ -295,84 +294,13 @@
           (recur (rest urls)))))
     (buffer-map-player buffers-atom options)))
 
-(defonce hh (sampler {44 "audio/505/hh.mp3" } {}))
+#_(def hh (sampler {44 "audio/505/hh.mp3" } {}))
 
-#_(-play-note hh {:pitch 44
+#_(js/setTimeout #(-play-note hh {:pitch 44
                 :velocity 1
                 :release 2
-                :abs-start-time (+ 1 (.-currentTime *context*)) })
-
-
-
-(defn create-osc-gain []
-  (let [osc (.createOscillator *context*)
-        gain (.createGain *context*)]
-    (.connect osc gain)
-    (set! (.. osc -type) "sine")
-    (set! (.. gain -gain -value) 0)
-    (.start osc)
-    (to-master gain)
-    {:osc  osc
-     :gain gain
-     :attack    0.01
-     :decay     0.0     
-     :sustain   0.2
-     :release   0.3
-     :spike     0.1
-     :amp       0.3}))
-
-
-
-(defn oscillator [options]
-  (let [osc (.createOscillator *context*)
-        gain (.createGain *context*)
-        filter (.createBiquadFilter *context*)]
-    (.connect osc gain)
-    (.connect gain filter)
-    (set! (.. filter -type) "lowpass")
-    (set! (.. filter -frequency -value) 350)
-    (set! (.. filter -frequency -Q) 6)    
-    (set! (.. osc -type) "square")
-    (set! (.. gain -gain -value) 0)
-    (.start osc)
-    (to-master gain)
-    (specify
-        {:osc  osc
-         :gain gain
-         :options
-         (atom (merge {:attack    0.01
-                       :decay     0.0     
-                       :sustain   0.2
-                       :release   0.3
-                       :amp       0.9
-                       :spike     0.1}
-                      options))}
-           IPlayable 
-           (-play-note [this {:keys [pitch duration abs-start-time sustain velocity] :as note-event}] 
-             (let [abs-start-time    (or abs-start-time (+ 0.1 (.-currentTime *context*)))
-                   gain-param        (.. (:gain this) -gain)
-                   osc-freq-param    (.. (:osc this)  -frequency)
-                   options           (merge @(:options this) (select-keys note-event [:sustain
-                                                                                      :decay
-                                                                                      :attack
-                                                                                      :release
-                                                                                      :amp
-                                                                                      :spike]))
-                   options          (if velocity (assoc options :amp (* (:amp options) (max velocity 1)))
-                                         options)]
-               (.setValueAtTime osc-freq-param (p/midi->hz pitch) abs-start-time)
-               (ADSR-param
-                options
-                gain-param abs-start-time)))
-           IDuration 
-           (-duration [this note-event]
-             (adsr-duration (merge @(:options this)
-                                   (select-keys note-event [:sustain
-                                                            :decay
-                                                            :attack
-                                                            :release
-                                                            :amp
-                                                            :spike])))))))
+                                :abs-start-time (+ 1 (.-currentTime *context*)) })
+               300)
 
 (defn mono-synth [options]
   (let [osc (.createOscillator *context*)
@@ -381,7 +309,6 @@
     (.connect osc filter)
     (.connect filter gain)
     (set! (.. filter -type) "lowpass")
-    (set! (.. filter -frequency -value) 350)
     (set! (.. filter -frequency -Q) 6)
     (set! (.. osc -type) "square")
     (set! (.. gain -gain -value) 0)
@@ -396,93 +323,106 @@
           {:envelope
            {:attack    0.01
             :decay     0.2     
-            :sustain   0.5 ;; this is sustain time 
+            :sustain   0.5 ;; this is sustain time
+            :sustain-level 0.4 
             :release   0.5
-            :amp       0.4 ;; this is sustain amp
-            :spike     0.3 }  
+            :amp       1}  
            :filter-envelope
            {:attack    0.06
             :decay     0.02     
             :sustain   0.5 ;; this is sustain time
+            :sustain-level 0.5
             :release   1.0
             :min       (* 20 20)
-            :amp       (* 2000 2000)
-            ;; this is sustain amp
-            :spike     (* 2000 2000) }
+            :amp       (* 2000 2000)}
            })}
+
            IPlayable 
            (-play-note [this {:keys [pitch duration abs-start-time sustain velocity] :as note-event}] 
-             (let [abs-start-time    (or abs-start-time (+ 0.1 (.-currentTime *context*)))
-                   gain-param        (.. (:gain this) -gain)
-                   osc-freq-param    (.. (:osc this)  -frequency)
-                   filter-freq-param    (.. (:filter this)  -frequency)
-                   options           (merge (:envelope @(:options this))
-                                            (select-keys note-event [:sustain
-                                                                     :decay
-                                                                     :attack
-                                                                     :release
-                                                                     :amp
-                                                                     :spike]))
-                   options          (if velocity (assoc options :amp (* (:amp options) (max velocity 1)))
-                                         options)]
+             (let [abs-start-time    (start-time note-event)
+                   gain-param          (.. gain -gain)
+                   osc-freq-param      (.. osc  -frequency)
+                   filter-freq-param    (.. filter  -frequency)
+                   envelope           (merge-envelope
+                                       (:envelope @(:options this))
+                                       note-event)]
+               ;; should probably use detune here
                (.setValueAtTime osc-freq-param (p/midi->hz pitch) abs-start-time)
                (ADSR-param
                 options
-                gain-param abs-start-time)
+                gain-param
+                abs-start-time)
                (ADSR-param
                 (:filter-envelope @(:options this))
                 filter-freq-param abs-start-time)))
            IDuration 
            (-duration [this note-event]
-             (adsr-duration (merge @(:options this)
-                                   (select-keys note-event [:sustain
-                                                            :decay
-                                                            :attack
-                                                            :release
-                                                            :amp
-                                                            :spike])))))))
+             (adsr-duration (merge-envelope
+                             (:envelope @(:options this))
+                             note-event))))))
+
+#_(def mono (mono-synth {}))
+#_(-play-note mono {:pitch 55
+                :velocity 1
+                :abs-start-time (+ 0.1 (.-currentTime *context*))})
 
 
-#_(def harmonocity 3.0)
-#_(def detune (* 0 (js/Math.pow 2 (/ 1 12))))
-#_(def modulation-index 40.2)
 
-#_(prn detune)
+
+(defn envelope-options [options-atom]
+  (letfn [(common [name max key]
+            {:key key
+             :ui-hint :slider
+             :name name
+             :min 0 :max max
+             :precision 6
+             :default-value (get-in @options-atom [:carrier key])
+             :set! #(swap! options-atom update-in [:carrier key] (fn [] %))}
+            )]
+    [(common "Volume" 1 :amp)
+     (common "Attack" 2 :attack)
+     (common "Decay" 2 :decay)
+     (common "Sustain" 2 :sustain)
+     (common "Release" 2 :release)
+     (common "Sustain Level" 1 :sustain-level)
+     (common "Attack Level" 1 :attack-level)]))
+
 
 (defn fm-synth [options]
   (let [modulator  (.createOscillator *context*)
         mod-gain   (.createGain *context*)
         carrier    (.createOscillator *context*)
         car-gain   (.createGain *context*)
-        modulation-index (or (:modulation-index options ) 40.2)
+
         detune     (or (:detune options) 0)
         delay      (when (:delay options)
                      (.createDelay *context*))
-       ;; filter     (.createBiquadFilter *context*)
-      ;;  mod-filter (.createBiquadFilter *context*)
-        output    (.createGain *context*)]
+        output    (.createGain *context*)
 
-    ;; (set! (.. filter -type) "lowpass")
-    ;; (set! (.. filter -frequency -value) 20000)
-    ;; (set! (.. filter -frequency -Q) 6)
-
-    ;; (set! (.. mod-filter -type) "lowpass")
-    ;; (set! (.. mod-filter -frequency -value) 20000)
-    ;; (set! (.. mod-filter -frequency -Q) 6)    
+        modulation-index (or (:modulation-index options ) 40.2)
+        harmonicity      (or (:harmonicity options ) 3)        
+        carrier-envelope
+        (merge-envelope {:attack    0.01
+                         :decay     0.0     
+                         :sustain   0.5
+                         :release   0.4
+                         :amp         1
+                         :attack-level 1
+                         :sustain-level 1}
+                        options)
+        modulator-envelope (assoc carrier-envelope :amp (* modulation-index modulation-index))]
     
     (set! (.. modulator -type) "triangle")
     ;; (.connect modulator mod-filter)
     (.connect modulator mod-gain)
     (set! (.. mod-gain -gain -value) (* modulation-index modulation-index))
     
-    (set! (.. modulator -detune -value) (* detune (js/Math.pow 2 (/ 1 12))))
+    (set! (.. modulator -detune -value) detune)
     (set! (.. carrier -type) "sine")
     (.connect carrier car-gain)
     (set! (.. car-gain -gain -value) 0)
 
-    ;; (.connect car-gain filter)    
     (.connect mod-gain (.-frequency carrier))
-
     (.connect car-gain output)
 
     (when delay
@@ -494,90 +434,74 @@
     (.start modulator)
     (.start carrier)
     (to-master output)
-    (specify
-        {
-         :options
-         (atom (merge {:harmonicity 3
-                       :modulation-index modulation-index
-                       :detune detune
-                       :carrier
-                       (merge {:attack    0.01
-                               :decay     0.0     
-                               :sustain   0.5
-                               :release   0.4
-                               :amp         1
-                               :spike     0.0}
-                              (select-keys options [:attack :decay :sustain :release :amp :spike]))
-                       :modulator
-                       (merge {:attack    0.01
-                               :decay     0.0     
-                               :sustain   0.5
-                               :release   0.4
-                               :min       0
-                               :amp       (* modulation-index modulation-index)
-                               :spike     0}
-                              (select-keys options [:attack :decay :sustain :release]))}
-                      (-> options
-                        (dissoc :carrier)
-                        (dissoc :modulator))))}
-
-           IPlayable 
-           (-play-note [this {:keys [pitch duration abs-start-time sustain velocity] :as note-event}] 
-             #_(prn "play " note-event)
-             (let [options           @(:options this)
-                   modulation-index  (:modulation-index options)
-                   abs-start-time    (or abs-start-time (+ 0.1 (.-currentTime *context*)))
-                   car-gain-param        (.. car-gain -gain)
-                   carrier-freq-param    (.. carrier  -frequency)
-                   mod-freq-param        (.. modulator  -frequency)
-                   mod-gain-param        (.. mod-gain  -gain)                   
-                   car-options           (merge (:carrier options)
-                                                (select-keys note-event [:sustain
-                                                                         :decay
-                                                                         :attack
-                                                                         :release
-                                                                         :amp
-                                                                         :spike]))
-                   car-options          (if velocity (assoc car-options :amp
-                                                            (* (:amp car-options) (min velocity 1)))
-                                            car-options)
-                   mod-options         (merge (:modulator options)
-                                              {:amp (* modulation-index modulation-index)}
-                                              (select-keys car-options
-                                                           [:sustain
-                                                            :decay
-                                                            :attack
-                                                            :release]))]
-               (.setValueAtTime carrier-freq-param (p/midi->hz pitch) abs-start-time)
-               (.setValueAtTime mod-freq-param     (* (p/midi->hz pitch)
-                                                      (get @(:options this) :harmonicity)) abs-start-time)
-               #_(prn car-options)
-               (ADSR-param
-                car-options
-                car-gain-param abs-start-time)
-               #_(prn mod-options)               
-               (ADSR-param
-                mod-options
-                mod-gain-param abs-start-time)))
-
-           IDuration 
-           (-duration [this note-event]
-             (adsr-duration (merge (:carrier @(:options this))
-                                   (select-keys note-event [:sustain
-                                                            :decay
-                                                            :attack
-                                                            :release
-                                                            :amp
-                                                            :spike])))))))
+    (let [options-atom
+          (atom (merge {:harmonicity harmonicity
+                        :modulation-index modulation-index
+                        :detune detune   
+                        :carrier carrier-envelope
+                        :modulator modulator-envelope}
+                       (-> options
+                         (dissoc :carrier)
+                         (dissoc :modulator))))]
+      (reify
+        IOptionsSchema
+        (-options-schema [this]
+          (concat
+           [{:key :harmonicity
+             :ui-hint :slider
+             :name "Harmonicity" :min 0 :max 10
+             :default-value harmonicity
+             :set! #(swap! options-atom assoc :harmonicity %)}
+            {:key :modulation-index
+             :ui-hint :slider
+             :name "Modulation"
+             :min 0 :max 100
+             :default-value modulation-index
+             :set! #(swap! options-atom assoc :modulation-index %)}]
+           (envelope-options options-atom)))
+        IPlayable 
+        (-play-note [this {:keys [pitch duration abs-start-time sustain velocity] :as note-event}] 
+          (let [options           @options-atom
+                modulation-index  (:modulation-index options)
+                harmonicity       (:harmonicity options)                   
+                abs-start-time        (start-time note-event)
+                car-gain-param        (.. car-gain -gain)
+                carrier-freq-param    (.. carrier  -frequency)
+                mod-freq-param        (.. modulator  -frequency)
+                mod-gain-param        (.. mod-gain  -gain)                   
+                car-options           (merge-envelope (:carrier options)
+                                                      note-event)
+                mod-options           (merge (:modulator options)
+                                             {:amp (* modulation-index modulation-index)}
+                                             (select-keys car-options
+                                                          [:sustain
+                                                           :decay
+                                                           :attack
+                                                           :release]))]
+            (.setValueAtTime carrier-freq-param (p/midi->hz pitch) abs-start-time)
+            (.setValueAtTime mod-freq-param     (* (p/midi->hz pitch)
+                                                   harmonicity)
+                             abs-start-time)
+            (ADSR-param
+             car-options
+             car-gain-param abs-start-time)
+            (ADSR-param
+             mod-options
+             mod-gain-param abs-start-time)))
+      
+        IDuration 
+        (-duration [this note-event]
+          (adsr-duration (merge-envelope (:carrier @options-atom)
+                                         note-event)))))))
 
 (comment
-  (def fsynth (fm-synth {:modulation-index 40 :harmonicity 3}))
+  (def fsynth (fm-synth {:modulation-index 10 :harmonicity 3}))
 
   (-play-note fsynth {:pitch 65 :velocity 1   :abs-start-time (+ 1 (.-currentTime *context*)) })
-  (-play-note fsynth {:pitch 65 :velocity 0.7 :abs-start-time (+ 3 (.-currentTime *context*)) })
-  (-play-note fsynth {:pitch 65 :velocity 0.5 :abs-start-time (+ 5 (.-currentTime *context*)) })
-  (-play-note fsynth {:pitch 65 :velocity 0.3 :abs-start-time (+ 7 (.-currentTime *context*)) })
-  (-play-note fsynth {:pitch 65 :velocity 0.1 :abs-start-time (+ 9 (.-currentTime *context*)) })
+  #_(-play-note fsynth {:pitch 65 :velocity 0.7 :abs-start-time (+ 3 (.-currentTime *context*)) })
+  #_(-play-note fsynth {:pitch 65 :velocity 0.5 :abs-start-time (+ 5 (.-currentTime *context*)) })
+  #_(-play-note fsynth {:pitch 65 :velocity 0.3 :abs-start-time (+ 7 (.-currentTime *context*)) })
+  #_(-play-note fsynth {:pitch 65 :velocity 0.1 :abs-start-time (+ 9 (.-currentTime *context*)) })
   )
 
 
@@ -586,11 +510,28 @@
                 :velocity 0.3
                 :abs-start-time (+ 0.1 (.-currentTime *context*))})
 
+(defn get-option [key options]
+  (first (filter #(= (:key %) key) options)))
+
+(defn proxy-schema [insts]
+  (map 
+   (fn [option]
+     (assoc
+      option
+      :set!
+      (fn [v]
+        (doseq [opt (mapv #(get-option (:key option) (-options-schema %))
+                          insts)]
+          ((:set! opt) v)))))
+   (-options-schema (first insts))))
+
 (defn poly-synth [synth-constructor synth-options options]
   (let [insts      (mapv (fn [_] (synth-constructor synth-options)) (range (or (:voices options)
                                                                               5)))
         ^:mutable end-times {}]
     (reify
+      IOptionsSchema
+      (-options-schema [this] (proxy-schema insts))
       IPlayable
       (-play-note [_ note-event]
         (let [abs-start-time (or (:abs-start-time note-event)
@@ -628,13 +569,13 @@
   
 )
 
-(defonce noise-buffer
+(def noise-buffer
   (let [buffer (.createBuffer *context* 1
                               22050
                               (.-sampleRate *context*))
         data   (.getChannelData buffer 0)]
     (doseq [i (range 22050)]
-      (aset data i (js/Math.random)))
+      (aset data i (- (* 2 (js/Math.random)) 1)))
     buffer))
 
 #_(let [b (buffer-source noise-buffer)]
@@ -646,17 +587,16 @@
 (defn noise [options]
   (buffer-map-player
    (atom {44 noise-buffer})
-   options))
+   (assoc options :loop true)))
 
-
-(comment
+(do
   (def noisey (noise {:amp 0.1
-                      :spike 0.1
+                      :sustain-level 0.3
                       :attack 0.01
                       :decay 0.01
-                      :sustain 0.001
-                      :release 0.05
-                      }))
+                      :sustain 0.04
+                      :release 0.05}))
+
   
   (-play-note noisey {:pitch 55
                       :velocity 0.7

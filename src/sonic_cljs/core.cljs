@@ -5,6 +5,7 @@
    [sonic-cljs.trig :refer [cosr sinr]]
    [sonic-cljs.pitch :as p]
    [sonic-cljs.webaudio :as wa]
+   [sonic-cljs.visual :as vis]
    [cljs.test :as t :include-macros true :refer-macros [is testing]]
    [cljs.core.async :as ca :refer [<! chan timeout]])
   (:require-macros
@@ -486,7 +487,6 @@
    #(play-music % state)
    (:children parallel)))
 
-
 (defmethod play-music :sequence [sequence state]
   (let [music-seq (create-skipper (:children sequence))]
     (letfn [(run-loop [last reload-count]
@@ -501,24 +501,6 @@
 
                   (js/requestAnimationFrame #(run-loop cur reload-count)))))]
       (run-loop nil @reload-atom))))
-
-
-
-
-#_(defmethod play-music :sequence [sequence state]
-  (go
-    (loop [music-seq (create-skipper (:children sequence))
-           last nil
-           reload-count @reload-atom]
-      (let [cur (first (music-seq
-                        (update-in state
-                                   [:start-time]
-                                   #(- % 0.1))))]
-        (when-not (or (nil? cur) (not= reload-count @reload-atom))
-          (when (not= cur last)
-            (play-music cur state))
-          (<! (timeout 20))
-          (recur music-seq cur reload-count))))))
 
 ;; doesn't handle function params yet
 (defmethod play-music :modify-state [{:keys [state-update children]} state]
@@ -542,9 +524,10 @@
                  :start-time
                  new-start))))
 
+;; play music still needs some work to be reloadable
+
 (defn play-music!! [state music]
   (js/setTimeout #(play-music! state music) 500))
-
 
 (defcard play-music-cardd
   (fn [da o]
@@ -561,17 +544,12 @@
   (fn [data-atom owner]
     (music-root data-atom music)))
 
-(defn main []
-  ;; conditionally start the app based on wether the #main-app-area
-  ;; node is on the page
-  (if-let [node (.getElementById js/document "main-app-area")]
-    (js/React.render (sab/html [:div "This is working"]) node)))
+;;; interactive helpers
 
-(main)
+(defn analyzer
+  ([opts] (vis/analyzer opts))
+  ([] (analyzer {})))
 
-;; remember to run lein figwheel and then browse to
-;; http://localhost:3449/devcards.html
-
-
-
+(defn controls [i-options-schema]
+  (vis/option-schema-controls i-options-schema))
 

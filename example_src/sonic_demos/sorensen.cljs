@@ -1,7 +1,8 @@
 (ns sonic-demos.sorensen
   (:require
    [devcards.core :as dc]
-   [sonic-cljs.core :as sc :refer [n n* ch initial-player-state mloop music-root-card use-synth mloop* play-music! play-music!!]]
+   [sonic-cljs.core :as sc :refer [n n* ch initial-player-state mloop music-root-card use-synth mloop* play-music! play-music!!
+                                   controls analyzer]]
    [sonic-cljs.trig :refer [cosr quantize]]
    [sonic-cljs.pitch :as p]
    [sonic-cljs.webaudio :as wa]
@@ -44,11 +45,12 @@
 (defn right-hand-high [scale root beat]
   (if (< (rand) 0.6)
     (quantizer
-     (+ 7 (int
-           (cosr beat
-                 (cosr beat 3 5 2)
-                 (+ (sc/note root) 24)
-                 (/ 3 7))))
+     (+ 7
+        (int
+         (cosr beat
+               (cosr beat 3 5 2)
+               (+ (sc/note root) 24)
+               (/ 3 7))))
      scale)
     ::sc/rest))
 
@@ -58,15 +60,15 @@
   (n
    (right-hand-n scale root beat)
    (/ 0.25 4)
-   (cosr beat 0.2 0.2 (/ 3 7))
+   (cosr beat 0.4 0.6 (/ 3 7))
    0.3))
 
 (defn music-note-high [scale root beat]
   (n
    (right-hand-high scale root beat)
    (/ 0.25 4)
-   (cosr beat 0.2 0.2 (/ 3 7))
-   0.02))
+   (cosr beat 0.15 0.6 (/ 3 7))
+   0.05))
 
 (def root-note
   (iterate
@@ -80,17 +82,45 @@
   [(n bnote 0.125 0.3 0.35)
    (n root 0.125 0.2 0.35)])
 
-(def main-synth* #_(wa/poly-synth wa/fm-synth {:attack 0.015 :sustain 0.1 :release 0.2 :amp 0.7 :modulation-index 20 :harmonicity 3} {})
-  (wa/piano wa/ivy-audio-piano))
+(defonce main-synth*
+  (wa/poly-synth wa/fm-synth {:decay 0.4
+                              :sustain 0.1
+                              :sustain-level 0.5
+                              :release 0.2
+                              :amp 0.3
+                              :modulation-index 25
+                              :harmonicity 3} {})
+  #_(wa/piano wa/ivy-audio-piano))
 
 (defonce main-synth2*
-  (wa/poly-synth wa/fm-synth { :sustain 0.1 :release 0.5 :amp 0.3 :modulation-index 40 :harmonicity 3 } {}))
+  (wa/poly-synth wa/fm-synth
+                 {:sustain-level 0.5
+                  :decay 0.4
+                  :sustain 0.1
+                  :release 0.1
+                  :amp 0.16
+                  :modulation-index 33
+                  :harmonicity 3 }
+                 {:voices 10}))
 
-(defonce main-synth3* (wa/poly-synth wa/fm-synth {:sustain 0.2 :release 0.3 :amp 0.4 :modulation-index 33 :harmonicity 3} {}))
+(defonce main-synth3* (wa/poly-synth wa/fm-synth {:attack 0.0
+                                                  :decay  0.05
+                                                  :sustain 0.1
+                                                  :release 0.5
+                                                  :amp 0.16
+                                                  :modulation-index 40
+                                                  :harmonicity 6}
+                                 {:voices 6}))
+
+
 
 #_(swap! music-state assoc
        :speed 0.37
        :start-time (sc/current-time* {:speed 0.31}))
+
+#_(defcard (analyzer))
+
+(defcard (controls main-synth*))
 
 (defcard bass-linee
   (fn [da o]
@@ -106,12 +136,14 @@
         (beat 0.25))])))
   music-state)
 
+#_(defcard (controls main-synth2*))
+
 (defcard impro-threeee
   (fn [da o]
     #_(play-music!
      @da
      (use-synth
-      main-synth*
+      main-synth2*
       [:+
       (map
        #(music-note scale %1 %2)
@@ -119,23 +151,29 @@
        (beat 0.25))])))
   music-state)
 
+#_(defcard (controls main-synth3*))
+
 (defcard impro-high
   (fn [da o]
     #_(play-music!
      @da
      (use-synth
-      main-synth2*
+      main-synth3*
       [:+
        (map
         #(music-note-high scale %1 %2)
         (mapcat
          #(take 64 (repeat %))
          root-note)
-        (beat 0.25))])))
+        (beat 0.125))])))
   music-state)
 
 (defonce bass-synth
-    (wa/fm-synth {:attack 0.015 :sustain 0.1 :release 0.2 :amp 0.4 :modulation-index 20 :harmonicity 3}))
+  (wa/fm-synth {:attack 0.015
+                :decay 0.09
+                :sustain 0.1 :release 0.2 :amp 0.5 :modulation-index 20 :harmonicity 3}))
+
+#_(defcard (controls bass-synth))
 
 (defcard low-base-line
   (fn [da o]
@@ -150,8 +188,8 @@
         (mloop* [(+ 0.25 0.125) 0.25 (- 0.5 0.125)]))])))
   music-state)
 
-(defonce hh-synth2  (wa/sampler {44 "audio/505/hh.mp3" } {:amp 0.1 :spike 0.05}))
-(def hh-synth (wa/noise {:amp 0.04
+(def hh-synth2 (wa/sampler {44 "audio/505/hh.mp3" } {:amp 0.2 :spike 0.05}))
+(def hh-synth (wa/noise {:amp 0.033
                          :spike 0.01
                          :decay 0.02
                          :attack 0.001
@@ -167,7 +205,7 @@
       [:+
        (mapcat
         (fn [b]
-          [(n 44 0.0625 0.3 0.01)
+          [(n 44 0.0625 1 0.01)
            (n 44 (- 0.25 0.0625) 0.2 0.1)])
         (beat 0.125))])))
   music-state)
