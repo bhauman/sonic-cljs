@@ -162,7 +162,7 @@
     (def steinway-grand (<! (load-steinway-grand)))
     (prn "Steinway grand loaded")))
 
-#_(defonce loading-ivy-audio-piano
+(defonce loading-ivy-audio-piano
   (go
     (def ivy-audio-piano (<! (load-ivy-audio-piano)))
     (prn "Ivy audio grand loaded")))

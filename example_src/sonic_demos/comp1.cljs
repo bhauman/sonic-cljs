@@ -1,4 +1,4 @@
-(ns sonic-demos.sorensen
+(ns sonic-demos.comp1
   (:require
    [devcards.core :as dc]
    [sonic-cljs.core :as sc :refer [n n* ch initial-player-state mloop music-root-card use-synth mloop* play-music! play-music!!
@@ -9,19 +9,6 @@
    [sablono.core :as sab :include-macros true]) 
   (:require-macros
    [devcards.core :refer [defcard deftest]]))
-
-(defn quantizer
-  [midi field]
-  (let [nt midi]
-    (if (some #{nt} field)
-      nt
-      (loop [x 1]
-        (let [up (int (+ nt x))
-              down (int (- nt x))]
-          (cond
-           (some #{up} field) up
-           (some #{down} field) down
-           :else (recur (inc x))))))))
 
 (defonce music-state (atom (initial-player-state
                             {:synth @sc/default-synth
@@ -36,15 +23,15 @@
 (def eigth-beat (beat (/ 1 8)))
 
 (defn right-hand-n [scale root beat]
-  (quantizer
+  (quantize
    (int
     (cosr beat (cosr beat 3 5 2)
-          (+ (sc/note root) 24)
+          (+ (sc/note root) 12)
           (/ 3 7))) scale))
 
 (defn right-hand-high [scale root beat]
   (if (< (rand) 0.6)
-    (quantizer
+    (quantize
      (+ 7
         (int
          (cosr beat
@@ -54,46 +41,45 @@
      scale)
     ::sc/rest))
 
-(def scale (p/scale-field :E :aeolian))
+(def scale (p/scale-field :G :major-pentatonic))
 
 (defn music-note [scale root beat]
   (n
    (right-hand-n scale root beat)
-   (/ 0.25 4)
+   (/ 0.25 3)
    (cosr beat 0.4 0.6 (/ 3 7))
    0.3))
 
 (defn music-note-high [scale root beat]
   (n
    (right-hand-high scale root beat)
-   (/ 0.25 4)
+   (/ 0.25 3)
    (cosr beat 0.15 0.6 (/ 3 7))
    0.05))
 
 (def root-note
   (iterate
-    (fn [x]
-      (- (rand-nth
-          (seq (disj #{52 50 48} x)))
-         0))
-    48))
+   (fn [x]
+     (rand-nth
+          (seq (disj #{:B3 :D3 :c3 #_"F#3"} x))))
+   :B3))
 
 (defn base-note [bnote root beat]
-  [(n bnote 0.125 0.5 0.35)
-   (n root 0.125 0.4 0.35)])
+  [(n bnote 0.25 0.5 0.35)
+   #_(n root 0.125 0.4 0.35)])
 
-(defonce main-synth*
-  (wa/poly-synth wa/fm-synth {:decay 0.4
+(def main-synth*
+  #_(wa/poly-synth wa/fm-synth {:decay 0.4
                               :sustain 0.1
                               :sustain-level 0.5
                               :release 0.2
                               :amp 0.3
                               :modulation-index 25
                               :harmonicity 3} {})
-  #_(wa/piano wa/ivy-audio-piano))
+  (wa/piano wa/ivy-audio-piano))
 
-(defonce main-synth2*
-  (wa/poly-synth wa/fm-synth
+(def main-synth2* (wa/piano wa/ivy-audio-piano)
+  #_(wa/poly-synth wa/fm-synth
                  {:sustain-level 0.5
                   :decay 0.4
                   :sustain 0.1
@@ -103,19 +89,19 @@
                   :harmonicity 3 }
                  {:voices 10}))
 
-(defonce main-synth3* (wa/poly-synth wa/fm-synth {:attack 0.0
-                                                  :decay  0.05
-                                                  :sustain 0.1
-                                                  :release 0.5
-                                                  :amp 0.16
-                                                  :modulation-index 40
-                                                  :harmonicity 6}
-                                 {:voices 6}))
-
-
+(def main-synth3*
+  (wa/piano wa/ivy-audio-piano)
+  #_(wa/poly-synth wa/fm-synth {:attack 0.0
+                              :decay  0.05
+                              :sustain 0.1
+                              :release 0.5
+                              :amp 0.16
+                              :modulation-index 40
+                              :harmonicity 6}
+                 {:voices 6}))
 
 #_(swap! music-state assoc
-       :speed 0.37
+       :speed 0.30
        :start-time (sc/current-time* {:speed 0.31}))
 
 #_(defcard (analyzer))
@@ -131,7 +117,7 @@
       [:+
        (mapcat
         #(base-note %1 %2 %3)
-        (mloop* [55 55 57 59 #_43])
+        (mloop* [:e3 :e3 :g3 :f#3 #_:g3])
         (mapcat #(take 8 (repeat %)) root-note)
         (beat 0.25))])))
   music-state)
@@ -148,7 +134,7 @@
       (map
        #(music-note scale %1 %2)
        (mapcat #(take 64 (repeat %)) root-note)
-       (beat 0.125))])))
+       (beat 0.25))])))
   music-state)
 
 #_(defcard (controls main-synth3*))
@@ -165,7 +151,7 @@
         (mapcat
          #(take 64 (repeat %))
          root-note)
-        (beat 0.125))])))
+        (beat 0.25))])))
   music-state)
 
 (defonce bass-synth
@@ -183,7 +169,8 @@
       bass-synth
       [:+
        (map
-        #(n (- %1 12) %2 0.4 0.2)
+        #(n (- (p/note %1)
+               12) %2 0.7 0.2)
         (mapcat #(take 6 (repeat %)) root-note)
         (mloop* [(+ 0.25 0.125) 0.25 (- 0.5 0.125)]))])))
   music-state)
@@ -206,8 +193,8 @@
       [:+
        (mapcat
         (fn [b]
-          [(n 44 0.0625 1 0.01)
-           (n 44 (- 0.25 0.0625) 0.2 0.1)])
+          [(n 44 (/ 0.25 3) 1 0.01)
+           (n 44 (- 0.33 (/ 0.25 3)) 0.2 0.1)])
         (beat 0.125))])))
   music-state)
 
@@ -222,10 +209,7 @@
         (fn [b]
           (n
            44
-           0.0625
+           (/ 0.25 3)
            (cosr b 0.5 0.5 (rand-nth [(/ 3 7) (/ 2 5)]))))
         (beat 0.125))])))
   music-state)
-
-
-

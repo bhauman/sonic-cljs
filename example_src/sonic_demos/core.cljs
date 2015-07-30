@@ -4,6 +4,7 @@
    [sonic-cljs.core]
    [sonic-demos.apres-midi]
    [sonic-demos.sorensen]
+   [sonic-demos.comp1]
    ))
 
 (defn ^:export main []
