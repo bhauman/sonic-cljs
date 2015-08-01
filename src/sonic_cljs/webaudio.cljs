@@ -184,6 +184,27 @@
     (* 2)
     (* 2500))) ;; middle frequency
 
+
+
+(defn piano-envelope-options [options-atom]
+  (letfn [(common [name max key]
+            {:key key
+             :ui-hint :slider
+             :name name
+             :min 0 :max max
+             :precision 6
+             :default-value (get-in @options-atom [ key])
+             :set! #(swap! options-atom update-in [ key] (fn [] %))}
+            )]
+    [(common "Volume" 1 :amp)
+     (common "Attack" 2 :attack)
+     (common "Decay" 2 :decay)
+     (common "Sustain" 2 :sustain)
+     (common "Release" 2 :release)
+     (common "Sustain Level" 1 :sustain-level)
+     (common "Attack Level" 1 :attack-level)]))
+
+
 (defn piano [decoded-buffers]
   (let [output     (.createGain *context*)
         delay      (.createDelay *context*)
@@ -196,12 +217,13 @@
                           (.connect gain output)
                           (.connect gain delay)
                           {:gain gain :filt filt}))
-        default-envelope {:attack 0.01
-                          :decay 0.1
-                          :sustain 1.3
-                          :release 0.2
-                          :amp 0.9
-                          :sustain-level 0.9}]
+        default-envelope (atom
+                          {:attack 0.01
+                           :decay 0.1
+                           :sustain 1.3
+                           :release 0.2
+                           :amp 0.9
+                           :sustain-level 0.9})]
     
     (set! (.. delay -delayTime -value) 0.0001)
     (set! (.. output -gain -value) 0.95)
@@ -211,10 +233,13 @@
     (.connect delay-gain output)
     (.connect output *output*)
     (reify
+      IOptionsSchema
+      (-options-schema [this]
+        (piano-envelope-options default-envelope))
       IPlayable
       (-play-note [_ note-event]
         (let [abs-start-time (start-time note-event)
-              envelope       (merge-envelope default-envelope note-event)]
+              envelope       (merge-envelope @default-envelope note-event)]
           (when (valid-envelope? envelope)
             (when-let [buffer  (get decoded-buffers (:pitch note-event))]
               (let [source     (buffer-source (:decoded-buffer buffer))
@@ -226,7 +251,7 @@
                 (.stop source (+ abs-start-time (adsr-duration envelope) 0.1)))))))
       IDuration
       (-duration [_ note-event]
-        (adsr-duration (merge-envelope default-envelope note-event))))))
+        (adsr-duration (merge-envelope @default-envelope note-event))))))
 
 
 (comment
